@@ -230,6 +230,43 @@ class CompiledMetricDistributionTest < Minitest::Test
     assert_equal(["env:production", "region:us-east", "service:web"], datagram.tags.sort)
   end
 
+  def test_sampled_distribution_value_uses_one_sampling_decision
+    sample_rate = 0.5
+    @sink.expects(:sample?).with(sample_rate).once.returns(true)
+
+    metric = Class.new(StatsD::Instrument::CompiledMetric::Distribution) do
+      define(
+        name: "foo.bar",
+        tags: { shop_id: Integer },
+        sample_rate: sample_rate,
+      )
+    end
+
+    metric.distribution(5, shop_id: 123)
+
+    assert_equal(1, @sink.datagrams.size)
+    assert_equal("test.foo.bar:5|d|@0.5|#shop_id:123", @sink.datagrams.first.source)
+  end
+
+  def test_sampled_distribution_block_uses_one_sampling_decision
+    sample_rate = 0.5
+    @sink.expects(:sample?).with(sample_rate).once.returns(true)
+    Process.stubs(:clock_gettime).with(Process::CLOCK_MONOTONIC, :float_millisecond).returns(100.0, 125.0)
+
+    metric = Class.new(StatsD::Instrument::CompiledMetric::Distribution) do
+      define(
+        name: "foo.bar",
+        sample_rate: sample_rate,
+      )
+    end
+
+    returned_value = metric.distribution { :result }
+
+    assert_equal(:result, returned_value)
+    assert_equal(1, @sink.datagrams.size)
+    assert_equal("test.foo.bar:25.0|d|@0.5", @sink.datagrams.first.source)
+  end
+
   def test_latency_as_value_when_block_provided
     metric = Class.new(StatsD::Instrument::CompiledMetric::Distribution) do
       define(
@@ -415,17 +452,16 @@ class CompiledMetricDistributionWithAggregationTest < Minitest::Test
   end
 
   def test_sample_rate_with_aggregation
-    # When aggregating with sample_rate, sampling happens before aggregation
-    # This test verifies that with a sample_rate >0, a subset of distributions are aggregated
+    sample_rate = 0.5
+    @sink.expects(:sample?).with(sample_rate).times(5).returns(false, true, false, false, true)
+
     metric = Class.new(StatsD::Instrument::CompiledMetric::Distribution) do
       define(
         name: "foo.bar",
         static_tags: { service: "web" },
-        sample_rate: 0.5,
+        sample_rate: sample_rate,
       )
     end
-
-    metric.stubs(:sample?).returns(false, true, false, false, true)
 
     metric.distribution(1)
     metric.distribution(2)
