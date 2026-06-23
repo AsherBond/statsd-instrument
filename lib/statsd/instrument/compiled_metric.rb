@@ -177,6 +177,10 @@ module StatsD
           default_val = default_value
           default_val_assignment = default_val.nil? ? "" : " = #{default_val.inspect}"
           allow_block = allow_measuring_latency
+          # Block-enabled compiled metrics run through generate_block_handler first,
+          # which applies sample_rate before emitting. Use the presampled client helper
+          # here so distributions don't make a second sampling decision.
+          client_emit_method = allow_block ? "emit_presampled_precompiled_#{method}_metric" : "emit_precompiled_#{method}_metric"
 
           method_code = <<~RUBY
             def self.#{method}(__value__#{default_val_assignment}, #{tag_names.map { |name| "#{name}:" }.join(", ")})
@@ -218,7 +222,7 @@ module StatsD
 
               __datagram__ ||= PrecompiledDatagram.new([#{tag_names.join(", ")}], @datagram_blueprint, @sample_rate)
 
-              @singleton_client.emit_precompiled_#{method}_metric(__datagram__, __value__)
+              @singleton_client.#{client_emit_method}(__datagram__, __value__)
               __return_value__
             end
           RUBY
@@ -233,12 +237,16 @@ module StatsD
           method = method_name
           default_val = default_value
           allow_block = allow_measuring_latency
+          # Block-enabled compiled metrics run through generate_block_handler first,
+          # which applies sample_rate before emitting. Use the presampled client helper
+          # here so distributions don't make a second sampling decision.
+          client_emit_method = allow_block ? "emit_presampled_precompiled_#{method}_metric" : "emit_precompiled_#{method}_metric"
 
           instance_eval(<<~RUBY, __FILE__, __LINE__ + 1)
             def self.#{method}(__value__ = #{default_val.inspect})
               __return_value__ = StatsD::Instrument::VOID
               #{generate_block_handler if allow_block}
-              @singleton_client.emit_precompiled_#{method}_metric(@static_datagram, __value__)
+              @singleton_client.#{client_emit_method}(@static_datagram, __value__)
               __return_value__
             end
           RUBY

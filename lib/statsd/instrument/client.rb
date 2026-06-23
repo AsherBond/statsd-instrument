@@ -285,6 +285,25 @@ module StatsD
         StatsD::Instrument::VOID
       end
 
+      # Emits a pre-sampled compiled distribution metric.
+      # This method is used when the generated compiled metric method already made
+      # the sampling decision before measuring block latency.
+      #
+      # @param precompiled_datagram [StatsD::Instrument::CompiledMetric::PrecompiledDatagram]
+      #   The precompiled metric datagram
+      # @param value [Numeric] The metric value
+      # @return [void]
+      # @api private
+      def emit_presampled_precompiled_distribution_metric(precompiled_datagram, value)
+        if @enable_aggregation
+          @aggregator.aggregate_precompiled_timing_metric(precompiled_datagram, value)
+          return StatsD::Instrument::VOID
+        end
+
+        emit(precompiled_datagram.to_datagram(value))
+        StatsD::Instrument::VOID
+      end
+
       # Emits a precompiled metric for high-performance use cases.
       # This method is used by {StatsD::Instrument::CompiledMetric::Gauge} to emit metrics
       # with minimal allocations.

@@ -6,6 +6,10 @@ section below.
 
 ## Unreleased changes
 
+## Version 3.11.1
+
+- Fix `CompiledMetric::Distribution` applying `sample_rate` twice.
+
 ## Version 3.11.0
 
 - [#418](https://github.com/Shopify/statsd-instrument/pull/418) - Prevent misuse of `CompiledMetric` definitions by requiring a subclass when defining one.
