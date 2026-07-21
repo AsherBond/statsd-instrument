@@ -69,7 +69,7 @@ module StatsD
         (?:\|m:(?<message>[^\|]+))?
         \n? # In some implementations, the datagram may include a trailing newline.
         \z
-      }x
+      }x.freeze
 
       # |k:my-key|p:low|s:source|t:success|
       EVENT_PARSER = %r{
@@ -84,7 +84,7 @@ module StatsD
         (?:\|\#(?<tags>(?:[^\|,]+(?:,[^\|,]+)*)))?
         \n? # In some implementations, the datagram may include a trailing newline.
         \z
-      }x
+      }x.freeze
 
       PARSER = Regexp.union(StatsD::Instrument::Datagram::PARSER, SERVICE_CHECK_PARSER, EVENT_PARSER)
     end

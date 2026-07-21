@@ -77,7 +77,7 @@ module StatsD
         (?:\|\#(?<tags>(?:[^\|,]+(?:,[^\|,]+)*)))?
         \n? # In some implementations, the datagram may include a trailing newline.
         \z
-      }x
+      }x.freeze
 
       def parsed_datagram
         @parsed ||= if (match_info = PARSER.match(@source))

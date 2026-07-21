@@ -3,7 +3,7 @@
 module RuboCop
   module Cop
     module StatsD
-      METRIC_METHODS = [:increment, :gauge, :measure, :set, :histogram, :distribution, :key_value]
+      METRIC_METHODS = [:increment, :gauge, :measure, :set, :histogram, :distribution, :key_value].freeze
 
       METAPROGRAMMING_METHODS = [
         :statsd_measure,
@@ -11,7 +11,7 @@ module RuboCop
         :statsd_count_success,
         :statsd_count_if,
         :statsd_count,
-      ]
+      ].freeze
 
       SINGLETON_CONFIGURATION_METHODS = [
         :backend,
@@ -22,7 +22,7 @@ module RuboCop
         :"default_tags=",
         :default_sample_rate,
         :"default_sample_rate=",
-      ]
+      ].freeze
 
       private
 

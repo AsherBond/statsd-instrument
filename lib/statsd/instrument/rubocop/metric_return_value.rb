@@ -19,7 +19,7 @@ module RuboCop
 
         MSG = "Do not use the return value of StatsD metric methods"
 
-        INVALID_PARENTS = [:lvasgn, :array, :pair, :send, :return, :yield]
+        INVALID_PARENTS = [:lvasgn, :array, :pair, :send, :return, :yield].freeze
 
         def on_send(node)
           if metric_method?(node) && node.arguments.last&.type != :block_pass
