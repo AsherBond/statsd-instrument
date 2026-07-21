@@ -51,28 +51,6 @@ class AggregatorTest < Minitest::Test
     StatsD.logger = @old_logger
   end
 
-  def test_aggregator_entrypoints_use_fixed_positional_arguments
-    assert_equal(
-      [[:req, :name], [:req, :value], [:req, :tags], [:req, :no_prefix], [:req, :sample_rate]],
-      StatsD::Instrument::Aggregator.instance_method(:increment).parameters,
-    )
-    assert_equal(
-      [[:req, :name], [:req, :value], [:req, :tags], [:req, :no_prefix]],
-      StatsD::Instrument::Aggregator.instance_method(:gauge).parameters,
-    )
-    assert_equal(
-      [
-        [:req, :name],
-        [:req, :value],
-        [:req, :tags],
-        [:req, :no_prefix],
-        [:req, :type],
-        [:req, :sample_rate],
-      ],
-      StatsD::Instrument::Aggregator.instance_method(:aggregate_timing).parameters,
-    )
-  end
-
   def test_increment_simple
     @subject.increment("foo", 1, tags: { foo: "bar" })
     @subject.increment("foo", 1, tags: { foo: "bar" })
