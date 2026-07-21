@@ -111,6 +111,32 @@ Please note that since aggregation is an experimental feature, it should be used
 > [!WARNING]
 > This feature is only compatible with Datadog Agent's version >=6.25.0 && <7.0.0 or Agent's versions >=7.25.0.
 
+#### External positional aggregators
+
+A client can use an external aggregation backend by passing `aggregator:`. This
+implicitly enables aggregation and uses fixed-arity positional calls, which
+avoids converting keyword arguments at a native extension boundary:
+
+```ruby
+client = StatsD::Instrument::Client.new(aggregator: MyNativeAggregator.new)
+```
+
+The aggregator implements:
+
+```ruby
+def record_counter(name, value, tags, no_prefix, sample_rate)
+def record_gauge(name, value, tags, no_prefix)
+def record_timing(name, value, tags, no_prefix, type, sample_rate)
+def flush
+```
+
+Calls without tags receive a shared frozen empty array. Other tag values are
+forwarded as-is; native aggregators can require callers to use arrays. The
+backend is responsible for applying the client's prefix/default-tag policy and
+for implementing the existing precompiled aggregation methods if it will be
+used with `CompiledMetric`. Cloned clients reuse the injected aggregator unless
+`aggregator:` is overridden.
+
 ## StatsD keys
 
 StatsD keys look like 'admin.logins.api.success'. Dots are used as namespace separators.

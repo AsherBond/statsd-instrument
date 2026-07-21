@@ -163,6 +163,12 @@ module StatsD
         end
       end
 
+      # Positional-only counter entrypoint used by external aggregation backends.
+      # @api private
+      def record_counter(name, value, tags, no_prefix, sample_rate)
+        increment(name, value, tags: tags, no_prefix: no_prefix, sample_rate: sample_rate)
+      end
+
       # Aggregates a precompiled metric that can be combined into a single scalar for later flushing.
       # @param precompiled_datagram [StatsD::Instrument::CompiledMetric::PrecompiledDatagram]
       #   The precompiled metric datagram, with the tag values already "filled-in".
@@ -249,6 +255,12 @@ module StatsD
         do_flush(aggregation_state) if aggregation_state
       end
 
+      # Positional-only timing entrypoint used by external aggregation backends.
+      # @api private
+      def record_timing(name, value, tags, no_prefix, type, sample_rate)
+        aggregate_timing(name, value, tags: tags, no_prefix: no_prefix, type: type, sample_rate: sample_rate)
+      end
+
       def gauge(name, value, tags: [], no_prefix: false)
         unless thread_healthcheck
           @sink << datagram_builder(no_prefix: no_prefix).g(name, value, CONST_SAMPLE_RATE, tags)
@@ -261,6 +273,12 @@ module StatsD
         @aggregation_state_mutex.synchronize do
           @aggregation_state[key] = value
         end
+      end
+
+      # Positional-only gauge entrypoint used by external aggregation backends.
+      # @api private
+      def record_gauge(name, value, tags, no_prefix)
+        gauge(name, value, tags: tags, no_prefix: no_prefix)
       end
 
       def flush

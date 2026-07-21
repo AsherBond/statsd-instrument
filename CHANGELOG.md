@@ -6,6 +6,8 @@ section below.
 
 ## Unreleased changes
 
+- Add an injectable positional aggregator interface with fixed-arity `increment`, `gauge`, and `aggregate_timing` entrypoints for native aggregation backends. Existing public client methods retain their keyword arguments.
+
 ## Version 3.11.2
 
 - Widen the `CompiledMetric` tag-combination cache key from 32 to 57 bits, eliminating
