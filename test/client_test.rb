@@ -3,42 +3,6 @@
 require "test_helper"
 
 class ClientTest < Minitest::Test
-  class PositionalAggregator
-    attr_reader :calls
-
-    def initialize
-      @calls = []
-    end
-
-    def increment(name, value, tags, no_prefix, sample_rate)
-      @calls << [:counter, name, value, tags, no_prefix, sample_rate]
-    end
-
-    def gauge(name, value, tags, no_prefix)
-      @calls << [:gauge, name, value, tags, no_prefix]
-    end
-
-    def aggregate_timing(name, value, tags, no_prefix, type, sample_rate)
-      @calls << [:timing, name, value, tags, no_prefix, type, sample_rate]
-    end
-
-    def aggregate_precompiled_increment_metric(datagram, value)
-      @calls << [:precompiled_counter, datagram, value]
-    end
-
-    def aggregate_precompiled_timing_metric(datagram, value)
-      @calls << [:precompiled_timing, datagram, value]
-    end
-
-    def aggregate_precompiled_gauge_metric(datagram, value)
-      @calls << [:precompiled_gauge, datagram, value]
-    end
-
-    def flush
-      @calls << [:flush]
-    end
-  end
-
   def setup
     @client = StatsD::Instrument::Client.new(datagram_builder_class: StatsD::Instrument::StatsDDatagramBuilder)
     @dogstatsd_client = StatsD::Instrument::Client.new(implementation: "datadog")
@@ -138,23 +102,12 @@ class ClientTest < Minitest::Test
     assert_equal(true, !datagram.nil?)
   end
 
-  def test_default_aggregator_uses_positional_dispatch
-    client = StatsD::Instrument::Client.new(enable_aggregation: true)
-    aggregator = client.instance_variable_get(:@aggregator)
-    tags = ["route:cart"]
-    aggregator.expects(:increment).with("requests", 1, tags, false, nil)
-
-    client.increment("requests", tags: tags)
-  ensure
-    aggregator&.instance_variable_get(:@flush_thread)&.kill
-  end
-
-  def test_positional_aggregator
-    aggregator = PositionalAggregator.new
+  def test_injected_aggregator_dispatches_all_metric_types
+    sink = StatsD::Instrument::CaptureSink.new(parent: StatsD::Instrument::NullSink.new)
     client = StatsD::Instrument::Client.new(
-      aggregator: aggregator,
+      sink: sink,
       default_sample_rate: 0.5,
-      sink: StatsD::Instrument::NullSink.new,
+      enable_aggregation: true,
     )
 
     tags = ["route:cart"]
@@ -165,49 +118,65 @@ class ClientTest < Minitest::Test
     client.histogram("size", 6, tags: tags)
     client.force_flush
 
-    assert_equal(
-      [
-        [:counter, "requests", 2, tags, false, 0.5],
-        [:gauge, "active", 3, tags, true],
-        [:timing, "latency", 4.5, tags, false, :d, 0.5],
-        [:timing, "duration", 5.5, tags, true, :ms, 0.5],
-        [:timing, "size", 6, tags, false, :h, 0.5],
-        [:flush],
-      ],
-      aggregator.calls,
-    )
+    counter = sink.datagrams.find { |d| d.name == "requests" }
+    assert_equal(2, counter.value)
+    assert_equal(0.5, counter.sample_rate)
+    assert_equal(tags, counter.tags)
+
+    gauge = sink.datagrams.find { |d| d.name == "active" }
+    assert_equal(3, gauge.value)
+    assert_equal(:g, gauge.type)
+    assert_equal(tags, gauge.tags)
+
+    dist = sink.datagrams.find { |d| d.name == "latency" }
+    assert_equal(4.5, dist.value)
+    assert_equal(:d, dist.type)
+    assert_equal(0.5, dist.sample_rate)
+
+    measure = sink.datagrams.find { |d| d.name == "duration" }
+    assert_equal(5.5, measure.value)
+    assert_equal(:ms, measure.type)
+
+    histogram = sink.datagrams.find { |d| d.name == "size" }
+    assert_equal(6, histogram.value)
+    assert_equal(:h, histogram.type)
+  ensure
+    client&.instance_variable_get(:@aggregator)&.instance_variable_get(:@flush_thread)&.kill
   end
 
-  def test_positional_aggregator_preserves_block_timing_and_return_value
-    aggregator = PositionalAggregator.new
-    client = StatsD::Instrument::Client.new(aggregator: aggregator)
+  def test_aggregation_preserves_block_timing_and_return_value
+    sink = StatsD::Instrument::CaptureSink.new(parent: StatsD::Instrument::NullSink.new)
+    client = StatsD::Instrument::Client.new(sink: sink, enable_aggregation: true)
     Process.stubs(:clock_gettime).with(Process::CLOCK_MONOTONIC, :float_millisecond).returns(100.0, 125.0)
 
     result = client.distribution("latency", tags: ["route:cart"]) { :result }
 
     assert_equal(:result, result)
-    assert_equal(
-      [[:timing, "latency", 25.0, ["route:cart"], false, :d, nil]],
-      aggregator.calls,
-    )
+    client.force_flush
+    datagram = sink.datagrams.find { |d| d.name == "latency" }
+    assert_equal(25.0, datagram.value)
+  ensure
+    client&.instance_variable_get(:@aggregator)&.instance_variable_get(:@flush_thread)&.kill
   end
 
-  def test_positional_aggregator_receives_only_sampled_metrics
-    aggregator = PositionalAggregator.new
-    sink = StatsD::Instrument::NullSink.new
+  def test_aggregation_skips_sampled_out_metrics
+    sink = StatsD::Instrument::CaptureSink.new(parent: StatsD::Instrument::NullSink.new)
     sink.stubs(:sample?).with(0.1).returns(false)
-    client = StatsD::Instrument::Client.new(aggregator: aggregator, sink: sink)
+    client = StatsD::Instrument::Client.new(sink: sink, enable_aggregation: true)
 
     client.increment("requests", sample_rate: 0.1)
     client.distribution("latency", 10, sample_rate: 0.1)
     client.histogram("size", 20, sample_rate: 0.1)
+    client.force_flush
 
-    assert_empty(aggregator.calls)
+    assert_empty(sink.datagrams)
+  ensure
+    client&.instance_variable_get(:@aggregator)&.instance_variable_get(:@flush_thread)&.kill
   end
 
-  def test_positional_aggregator_supports_existing_compiled_metrics
-    aggregator = PositionalAggregator.new
-    client = StatsD::Instrument::Client.new(aggregator: aggregator)
+  def test_aggregation_supports_existing_compiled_metrics
+    sink = StatsD::Instrument::CaptureSink.new(parent: StatsD::Instrument::NullSink.new)
+    client = StatsD::Instrument::Client.new(sink: sink, enable_aggregation: true)
     old_client = StatsD.singleton_client
     StatsD.singleton_client = client
     metric = Class.new(StatsD::Instrument::CompiledMetric::Counter) do
@@ -215,22 +184,28 @@ class ClientTest < Minitest::Test
     end
 
     metric.increment(2)
+    client.force_flush
 
-    assert_equal(:precompiled_counter, aggregator.calls.first[0])
-    assert_kind_of(StatsD::Instrument::CompiledMetric::PrecompiledDatagram, aggregator.calls.first[1])
-    assert_equal(2, aggregator.calls.first[2])
+    datagram = sink.datagrams.find { |d| d.name == "compiled.requests" }
+    assert_equal(2, datagram.value)
   ensure
     StatsD.singleton_client = old_client
+    client&.instance_variable_get(:@aggregator)&.instance_variable_get(:@flush_thread)&.kill
   end
 
-  def test_clone_with_options_preserves_positional_aggregator
-    aggregator = PositionalAggregator.new
-    client = StatsD::Instrument::Client.new(aggregator: aggregator)
+  def test_clone_with_options_preserves_aggregator
+    sink = StatsD::Instrument::CaptureSink.new(parent: StatsD::Instrument::NullSink.new)
+    client = StatsD::Instrument::Client.new(sink: sink, enable_aggregation: true)
     clone = client.clone_with_options(prefix: "clone")
 
     clone.increment("requests")
+    clone.force_flush
 
-    assert_equal([[:counter, "requests", 1, [], false, nil]], aggregator.calls)
+    datagram = sink.datagrams.find { |d| d.name == "clone.requests" }
+    assert_equal(1, datagram.value)
+  ensure
+    client&.instance_variable_get(:@aggregator)&.instance_variable_get(:@flush_thread)&.kill
+    clone&.instance_variable_get(:@aggregator)&.instance_variable_get(:@flush_thread)&.kill
   end
 
   def test_capture

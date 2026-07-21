@@ -3,22 +3,6 @@
 require "test_helper"
 
 class AggregatorTest < Minitest::Test
-  # Keeps the behavior-focused tests readable while the production Aggregator
-  # exposes only its strict positional interface.
-  class KeywordTestAggregator < StatsD::Instrument::Aggregator
-    def increment(name, value = 1, tags: [], no_prefix: false, sample_rate: 1.0)
-      super(name, value, tags, no_prefix, sample_rate)
-    end
-
-    def gauge(name, value, tags: [], no_prefix: false)
-      super(name, value, tags, no_prefix)
-    end
-
-    def aggregate_timing(name, value, tags: [], no_prefix: false, type: :d, sample_rate: 1.0)
-      super(name, value, tags, no_prefix, type, sample_rate)
-    end
-  end
-
   class CaptureLogger
     attr_reader :messages
 
@@ -40,7 +24,7 @@ class AggregatorTest < Minitest::Test
     StatsD.logger = @logger
 
     @sink = StatsD::Instrument::CaptureSink.new(parent: StatsD::Instrument::NullSink.new)
-    @subject = KeywordTestAggregator.new(
+    @subject = StatsD::Instrument::Aggregator.new(
       @sink, StatsD::Instrument::DatagramBuilder, nil, [], flush_interval: 0.1
     )
   end
@@ -52,8 +36,8 @@ class AggregatorTest < Minitest::Test
   end
 
   def test_increment_simple
-    @subject.increment("foo", 1, tags: { foo: "bar" })
-    @subject.increment("foo", 1, tags: { foo: "bar" })
+    @subject.increment("foo", 1, ["foo:bar"], false, 1.0)
+    @subject.increment("foo", 1, ["foo:bar"], false, 1.0)
     @subject.flush
 
     datagram = @sink.datagrams.first
@@ -64,10 +48,9 @@ class AggregatorTest < Minitest::Test
   end
 
   def test_increment_with_sample_rate
-    # Test that increment properly passes through sample_rate
-    @subject.increment("counter.sampled", 1, tags: { foo: "bar" }, sample_rate: 0.5)
-    @subject.increment("counter.sampled", 2, tags: { foo: "bar" }, sample_rate: 0.5)
-    @subject.increment("counter.unsampled", 1, tags: { foo: "bar" })
+    @subject.increment("counter.sampled", 1, ["foo:bar"], false, 0.5)
+    @subject.increment("counter.sampled", 2, ["foo:bar"], false, 0.5)
+    @subject.increment("counter.unsampled", 1, ["foo:bar"], false, 1.0)
     @subject.flush
 
     assert_equal(2, @sink.datagrams.size)
@@ -84,11 +67,10 @@ class AggregatorTest < Minitest::Test
   end
 
   def test_increment_different_sample_rates_create_different_aggregation_keys
-    # Counters with different sample rates should be aggregated separately
-    @subject.increment("counter", 1, sample_rate: 0.5)
-    @subject.increment("counter", 2, sample_rate: 0.5)
-    @subject.increment("counter", 10, sample_rate: 0.1)
-    @subject.increment("counter", 20, sample_rate: 0.1)
+    @subject.increment("counter", 1, [], false, 0.5)
+    @subject.increment("counter", 2, [], false, 0.5)
+    @subject.increment("counter", 10, [], false, 0.1)
+    @subject.increment("counter", 20, [], false, 0.1)
     @subject.flush
 
     assert_equal(2, @sink.datagrams.size)
@@ -101,8 +83,8 @@ class AggregatorTest < Minitest::Test
   end
 
   def test_distribution_simple
-    @subject.aggregate_timing("foo", 1, tags: { foo: "bar" })
-    @subject.aggregate_timing("foo", 100, tags: { foo: "bar" })
+    @subject.aggregate_timing("foo", 1, ["foo:bar"], false, :d, 1.0)
+    @subject.aggregate_timing("foo", 100, ["foo:bar"], false, :d, 1.0)
     @subject.flush
 
     datagram = @sink.datagrams.first
@@ -112,9 +94,9 @@ class AggregatorTest < Minitest::Test
   end
 
   def test_timing_sampling_scaling
-    @subject.aggregate_timing("timing.sampled", 60.0, sample_rate: 0.01)
-    @subject.aggregate_timing("timing.sampled", 80.0, sample_rate: 0.01)
-    @subject.aggregate_timing("timing.unsampled", 60.0, sample_rate: 1.0)
+    @subject.aggregate_timing("timing.sampled", 60.0, [], false, :d, 0.01)
+    @subject.aggregate_timing("timing.sampled", 80.0, [], false, :d, 0.01)
+    @subject.aggregate_timing("timing.unsampled", 60.0, [], false, :d, 1.0)
 
     @subject.flush
 
@@ -130,11 +112,11 @@ class AggregatorTest < Minitest::Test
   end
 
   def test_mixed_type_timings
-    @subject.aggregate_timing("foo_ms", 1, tags: { foo: "bar" }, type: :ms)
-    @subject.aggregate_timing("foo_ms", 100, tags: { foo: "bar" }, type: :ms)
+    @subject.aggregate_timing("foo_ms", 1, ["foo:bar"], false, :ms, 1.0)
+    @subject.aggregate_timing("foo_ms", 100, ["foo:bar"], false, :ms, 1.0)
 
-    @subject.aggregate_timing("foo_d", 100, tags: { foo: "bar" }, type: :d)
-    @subject.aggregate_timing("foo_d", 120, tags: { foo: "bar" }, type: :d)
+    @subject.aggregate_timing("foo_d", 100, ["foo:bar"], false, :d, 1.0)
+    @subject.aggregate_timing("foo_d", 120, ["foo:bar"], false, :d, 1.0)
 
     @subject.flush
 
@@ -146,8 +128,8 @@ class AggregatorTest < Minitest::Test
   end
 
   def test_gauge_simple
-    @subject.gauge("foo", 1, tags: { foo: "bar" })
-    @subject.gauge("foo", 100, tags: { foo: "bar" })
+    @subject.gauge("foo", 1, ["foo:bar"], false)
+    @subject.gauge("foo", 100, ["foo:bar"], false)
     @subject.flush
 
     datagram = @sink.datagrams.first
@@ -157,18 +139,18 @@ class AggregatorTest < Minitest::Test
   end
 
   def test_increment_with_tags_in_different_orders
-    @subject.increment("foo", 1, tags: ["tag1:val1", "tag2:val2"])
-    @subject.increment("foo", 1, tags: ["tag2:val2", "tag1:val1"])
+    @subject.increment("foo", 1, ["tag1:val1", "tag2:val2"], false, 1.0)
+    @subject.increment("foo", 1, ["tag2:val2", "tag1:val1"], false, 1.0)
     @subject.flush
 
     assert_equal(2, @sink.datagrams.first.value)
   end
 
   def test_increment_with_different_tag_values
-    @subject.increment("foo", 1, tags: ["tag1:val1", "tag2:val2"])
-    @subject.increment("foo", 1, tags: { tag1: "val1", tag2: "val2" })
+    @subject.increment("foo", 1, ["tag1:val1", "tag2:val2"], false, 1.0)
+    @subject.increment("foo", 1, { tag1: "val1", tag2: "val2" }, false, 1.0)
 
-    @subject.increment("bar")
+    @subject.increment("bar", 1, [], false, 1.0)
     @subject.flush
 
     assert_equal(2, @sink.datagrams.first.value)
@@ -177,8 +159,8 @@ class AggregatorTest < Minitest::Test
   end
 
   def test_increment_with_different_metric_names
-    @subject.increment("foo", 1, tags: ["tag1:val1", "tag2:val2"])
-    @subject.increment("bar", 1, tags: ["tag1:val1", "tag2:val2"])
+    @subject.increment("foo", 1, ["tag1:val1", "tag2:val2"], false, 1.0)
+    @subject.increment("bar", 1, ["tag1:val1", "tag2:val2"], false, 1.0)
     @subject.flush
 
     assert_equal(1, @sink.datagrams.find { |d| d.name == "foo" }.value)
@@ -186,22 +168,22 @@ class AggregatorTest < Minitest::Test
   end
 
   def test_increment_with_different_values
-    @subject.increment("foo", 1, tags: ["tag1:val1", "tag2:val2"])
-    @subject.increment("foo", 2, tags: ["tag1:val1", "tag2:val2"])
+    @subject.increment("foo", 1, ["tag1:val1", "tag2:val2"], false, 1.0)
+    @subject.increment("foo", 2, ["tag1:val1", "tag2:val2"], false, 1.0)
     @subject.flush
 
     assert_equal(3, @sink.datagrams.first.value)
   end
 
   def test_send_mixed_types_will_pass_through
-    @subject.increment("test_counter", 1, tags: ["tag1:val1", "tag2:val2"])
-    @subject.aggregate_timing("test_counter", 100, tags: ["tag1:val1", "tag2:val2"])
+    @subject.increment("test_counter", 1, ["tag1:val1", "tag2:val2"], false, 1.0)
+    @subject.aggregate_timing("test_counter", 100, ["tag1:val1", "tag2:val2"], false, :d, 1.0)
 
-    @subject.gauge("test_gauge", 100, tags: ["tag1:val1", "tag2:val2"])
-    @subject.increment("test_gauge", 1, tags: ["tag1:val1", "tag2:val2"])
+    @subject.gauge("test_gauge", 100, ["tag1:val1", "tag2:val2"], false)
+    @subject.increment("test_gauge", 1, ["tag1:val1", "tag2:val2"], false, 1.0)
 
-    @subject.aggregate_timing("test_timing", 100, tags: ["tag1:val1", "tag2:val2"])
-    @subject.gauge("test_timing", 100, tags: ["tag1:val1", "tag2:val2"])
+    @subject.aggregate_timing("test_timing", 100, ["tag1:val1", "tag2:val2"], false, :d, 1.0)
+    @subject.gauge("test_timing", 100, ["tag1:val1", "tag2:val2"], false)
     @subject.flush
 
     assert_equal(6, @sink.datagrams.size)
@@ -216,12 +198,12 @@ class AggregatorTest < Minitest::Test
   end
 
   def test_with_prefix
-    aggregator = KeywordTestAggregator.new(@sink, StatsD::Instrument::DatagramBuilder, "MyApp", [])
+    aggregator = StatsD::Instrument::Aggregator.new(@sink, StatsD::Instrument::DatagramBuilder, "MyApp", [])
 
-    aggregator.increment("foo", 1, tags: ["tag1:val1", "tag2:val2"])
-    aggregator.increment("foo", 1, tags: ["tag1:val1", "tag2:val2"])
+    aggregator.increment("foo", 1, ["tag1:val1", "tag2:val2"], false, 1.0)
+    aggregator.increment("foo", 1, ["tag1:val1", "tag2:val2"], false, 1.0)
 
-    aggregator.increment("foo", 1, tags: ["tag1:val1", "tag2:val2"], no_prefix: true)
+    aggregator.increment("foo", 1, ["tag1:val1", "tag2:val2"], true, 1.0)
     aggregator.flush
 
     assert_equal(2, @sink.datagrams.size)
@@ -233,14 +215,11 @@ class AggregatorTest < Minitest::Test
   end
 
   def test_finalizer_with_prefix
-    # Test that the finalizer correctly uses the prefix when flushing metrics
-    # IMPORTANT: Use empty tags to ensure datagram_builder is not pre-created by tags_sorted
-    aggregator = KeywordTestAggregator.new(@sink, StatsD::Instrument::DatagramBuilder, "MyApp", [])
+    aggregator = StatsD::Instrument::Aggregator.new(@sink, StatsD::Instrument::DatagramBuilder, "MyApp", [])
 
-    aggregator.increment("foo", 1, tags: [])
-    aggregator.increment("bar", 1, tags: [], no_prefix: true)
+    aggregator.increment("foo", 1, [], false, 1.0)
+    aggregator.increment("bar", 1, [], true, 1.0)
 
-    # Manually trigger the finalizer (simulates GC cleanup)
     finalizer = StatsD::Instrument::Aggregator.finalize(
       aggregator.instance_variable_get(:@finalizer),
     )
@@ -258,18 +237,15 @@ class AggregatorTest < Minitest::Test
   end
 
   def test_synchronous_operation_on_thread_failure
-    # Force thread_healthcheck to return false
     @subject.stubs(:thread_healthcheck).returns(false)
 
-    # Stub methods on @aggregation_state to ensure they are not called
     aggregation_state = @subject.instance_variable_get(:@aggregation_state)
     aggregation_state.stubs(:[]=).never
 
-    @subject.increment("foo", 1, tags: { foo: "bar" })
-    @subject.aggregate_timing("bar", 100, tags: { foo: "bar" })
-    @subject.gauge("baz", 100, tags: { foo: "bar" })
+    @subject.increment("foo", 1, ["foo:bar"], false, 1.0)
+    @subject.aggregate_timing("bar", 100, ["foo:bar"], false, :d, 1.0)
+    @subject.gauge("baz", 100, ["foo:bar"], false)
 
-    # Verify metrics were sent immediately
     assert_equal(3, @sink.datagrams.size)
 
     counter_datagram = @sink.datagrams.find { |d| d.name == "foo" }
@@ -284,11 +260,9 @@ class AggregatorTest < Minitest::Test
     assert_equal(100, gauge_datagram.value)
     assert_equal(["foo:bar"], gauge_datagram.tags)
 
-    # Additional metrics should also go through synchronously
-    @subject.increment("foo", 1, tags: { foo: "bar" })
-    @subject.aggregate_timing("bar", 200, tags: { foo: "bar" }, sample_rate: 0.5)
+    @subject.increment("foo", 1, ["foo:bar"], false, 1.0)
+    @subject.aggregate_timing("bar", 200, ["foo:bar"], false, :d, 0.5)
 
-    # Verify new metrics were also sent immediately
     assert_equal(5, @sink.datagrams.size)
 
     counter_datagram = @sink.datagrams.select { |d| d.name == "foo" }.last
@@ -303,65 +277,52 @@ class AggregatorTest < Minitest::Test
     after_aggregation_state = @subject.instance_variable_get(:@aggregation_state)
     assert_same(after_aggregation_state, aggregation_state)
 
-    # undo the stubbing
     @subject.unstub(:thread_healthcheck)
   end
 
   def test_recreate_thread_after_fork
     skip("#{RUBY_ENGINE} not supported for this test. Reason: fork()") if RUBY_ENGINE != "ruby"
-    # Record initial metrics
-    @subject.increment("foo", 1, tags: { foo: "bar" })
-    @subject.aggregate_timing("bar", 100, tags: { foo: "bar" })
+    @subject.increment("foo", 1, ["foo:bar"], false, 1.0)
+    @subject.aggregate_timing("bar", 100, ["foo:bar"], false, :d, 1.0)
 
-    # kill the flush thread
     @subject.instance_variable_get(:@flush_thread).kill
 
-    # Fork the process
     pid = Process.fork do
-      # In forked process, send more metrics
-      @subject.increment("foo", 2, tags: { foo: "bar" })
-      @subject.aggregate_timing("bar", 200, tags: { foo: "bar" })
+      @subject.increment("foo", 2, ["foo:bar"], false, 1.0)
+      @subject.aggregate_timing("bar", 200, ["foo:bar"], false, :d, 1.0)
       @subject.flush
 
       assert_equal(2, @sink.datagrams.size)
       exit!
     end
 
-    # Wait for forked process to complete
     Process.wait(pid)
 
-    # Send metrics in parent process
-    @subject.increment("foo", 3, tags: { foo: "bar" })
-    @subject.aggregate_timing("bar", 300, tags: { foo: "bar" })
+    @subject.increment("foo", 3, ["foo:bar"], false, 1.0)
+    @subject.aggregate_timing("bar", 300, ["foo:bar"], false, :d, 1.0)
     @subject.flush
 
     assert_equal(2, @sink.datagrams.size)
 
-    # Verify metrics were properly aggregated in parent process
     counter_datagrams = @sink.datagrams.select { |d| d.name == "foo" }
     timing_datagrams = @sink.datagrams.select { |d| d.name == "bar" }
 
     assert_equal(1, counter_datagrams.size)
     assert_equal(1, timing_datagrams.size)
 
-    # Aggregate despite fork
     assert_equal(4, counter_datagrams.last.value)
     assert_equal([100.0, 300.0], timing_datagrams.last.value)
   end
 
   def test_race_condition_during_forking
     skip("#{RUBY_ENGINE} not supported for this test. Reason: fork()") if RUBY_ENGINE != "ruby"
-    # Record initial metrics
-    @subject.increment("before_fork.count", 1, tags: { foo: "bar" })
-    @subject.aggregate_timing("before_fork.timing", 100, tags: { foo: "bar" })
+    @subject.increment("before_fork.count", 1, ["foo:bar"], false, 1.0)
+    @subject.aggregate_timing("before_fork.timing", 100, ["foo:bar"], false, :d, 1.0)
 
-    # Fork the process
     pid = Process.fork do
-      # In forked process, send more metrics
-      @subject.increment("in_child.count", 2, tags: { foo: "bar" })
-      @subject.aggregate_timing("in_child.timing", 200, tags: { foo: "bar" })
+      @subject.increment("in_child.count", 2, ["foo:bar"], false, 1.0)
+      @subject.aggregate_timing("in_child.timing", 200, ["foo:bar"], false, :d, 1.0)
 
-      # Simulate thread waiting for flush
       sleep(0.1)
       @subject.flush
 
@@ -369,20 +330,16 @@ class AggregatorTest < Minitest::Test
       exit!
     end
 
-    # Call flush concurrently in parent process
     @subject.flush
 
-    # Wait for forked process to complete
     Process.wait(pid)
 
-    # Send metrics in parent process
-    @subject.increment("after_fork.count", 3, tags: { foo: "bar" })
-    @subject.aggregate_timing("after_fork.timing", 300, tags: { foo: "bar" })
+    @subject.increment("after_fork.count", 3, ["foo:bar"], false, 1.0)
+    @subject.aggregate_timing("after_fork.timing", 300, ["foo:bar"], false, :d, 1.0)
     @subject.flush
 
     assert_equal(4, @sink.datagrams.size)
 
-    # Verify metrics were properly aggregated in parent process
     counter_datagrams = @sink.datagrams.select { |d| d.name == "before_fork.count" }
     timing_datagrams = @sink.datagrams.select { |d| d.name == "before_fork.count" }
     assert_equal(
@@ -392,7 +349,6 @@ class AggregatorTest < Minitest::Test
     )
     assert_equal(1, timing_datagrams.size)
 
-    # After fork metrics
     counter_datagrams = @sink.datagrams.select { |d| d.name == "after_fork.count" }
     timing_datagrams = @sink.datagrams.select { |d| d.name == "after_fork.count" }
     assert_equal(1, counter_datagrams.size)
@@ -400,18 +356,16 @@ class AggregatorTest < Minitest::Test
   end
 
   def test_finalizer_flushes_pending_metrics
-    @subject.increment("foo", 1, tags: { foo: "bar" })
-    @subject.aggregate_timing("bar", 100, tags: { foo: "bar" })
-    @subject.gauge("baz", 100, tags: { foo: "bar" })
-    @subject.aggregate_timing("sampled_timing", 100, tags: { foo: "bar" }, sample_rate: 0.01)
+    @subject.increment("foo", 1, ["foo:bar"], false, 1.0)
+    @subject.aggregate_timing("bar", 100, ["foo:bar"], false, :d, 1.0)
+    @subject.gauge("baz", 100, ["foo:bar"], false)
+    @subject.aggregate_timing("sampled_timing", 100, ["foo:bar"], false, :d, 0.01)
 
-    # Manually trigger the finalizer
     finalizer = StatsD::Instrument::Aggregator.finalize(
       @subject.instance_variable_get(:@finalizer),
     )
     finalizer.call
 
-    # Verify that all pending metrics are sent
     assert_equal(4, @sink.datagrams.size)
 
     counter_datagram = @sink.datagrams.find { |d| d.name == "foo" }
@@ -434,13 +388,11 @@ class AggregatorTest < Minitest::Test
   def test_aggregator_finalizer_is_called_on_gc
     skip_on_jruby("JRuby's GC does not guarantee finalizers are called promptly")
 
-    5.times { @subject.increment("foo", 1, tags: { foo: "bar" }) }
+    5.times { @subject.increment("foo", 1, ["foo:bar"], false, 1.0) }
 
     @subject.instance_variable_get(:@flush_thread)&.kill
-    # Unbind the aggregator to allow GC to collect it.
     @subject = nil
 
-    # We expect the finalizer to flush the aggregated metrics.
     assert_empty(@sink.datagrams)
 
     5.times do
@@ -457,10 +409,11 @@ class AggregatorTest < Minitest::Test
   end
 
   def test_aggregator_finalizer_is_called_on_gc_after_aggregation_state_move
-    (StatsD::Instrument::Aggregator::DEFAULT_MAX_CONTEXT_SIZE + 5).times { @subject.aggregate_timing("foo", 1) }
+    (StatsD::Instrument::Aggregator::DEFAULT_MAX_CONTEXT_SIZE + 5).times do
+      @subject.aggregate_timing("foo", 1, [], false, :d, 1.0)
+    end
     assert_equal(1, @sink.datagrams.size)
 
-    # Unbind the aggregator to allow GC to collect it.
     @subject = nil
     5.times do
       GC.start(full_mark: true, immediate_mark: true, immediate_sweep: true)
@@ -484,10 +437,9 @@ class AggregatorTest < Minitest::Test
 
     old_trap = Signal.trap("USR1") do
       signal_received = true
-      # These operations should now fall back to direct writes
-      @subject.increment("trap_counter", 1)
-      @subject.gauge("trap_gauge", 42)
-      @subject.aggregate_timing("trap_timing", 100)
+      @subject.increment("trap_counter", 1, [], false, 1.0)
+      @subject.gauge("trap_gauge", 42, [], false)
+      @subject.aggregate_timing("trap_timing", 100, [], false, :d, 1.0)
 
       metrics_sent_in_trap = @sink.datagrams.map(&:name)
     end
