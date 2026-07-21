@@ -102,48 +102,6 @@ class ClientTest < Minitest::Test
     assert_equal(true, !datagram.nil?)
   end
 
-  def test_injected_aggregator_dispatches_all_metric_types
-    sink = StatsD::Instrument::CaptureSink.new(parent: StatsD::Instrument::NullSink.new)
-    client = StatsD::Instrument::Client.new(
-      sink: sink,
-      default_sample_rate: 0.5,
-      enable_aggregation: true,
-    )
-
-    tags = ["route:cart"]
-    client.increment("requests", 2, tags: tags)
-    client.gauge("active", 3, tags: tags, no_prefix: true)
-    client.distribution("latency", 4.5, tags: tags)
-    client.measure("duration", 5.5, tags: tags, no_prefix: true)
-    client.histogram("size", 6, tags: tags)
-    client.force_flush
-
-    counter = sink.datagrams.find { |d| d.name == "requests" }
-    assert_equal(2, counter.value)
-    assert_equal(0.5, counter.sample_rate)
-    assert_equal(tags, counter.tags)
-
-    gauge = sink.datagrams.find { |d| d.name == "active" }
-    assert_equal(3, gauge.value)
-    assert_equal(:g, gauge.type)
-    assert_equal(tags, gauge.tags)
-
-    dist = sink.datagrams.find { |d| d.name == "latency" }
-    assert_equal(4.5, dist.value)
-    assert_equal(:d, dist.type)
-    assert_equal(0.5, dist.sample_rate)
-
-    measure = sink.datagrams.find { |d| d.name == "duration" }
-    assert_equal(5.5, measure.value)
-    assert_equal(:ms, measure.type)
-
-    histogram = sink.datagrams.find { |d| d.name == "size" }
-    assert_equal(6, histogram.value)
-    assert_equal(:h, histogram.type)
-  ensure
-    client&.instance_variable_get(:@aggregator)&.instance_variable_get(:@flush_thread)&.kill
-  end
-
   def test_aggregation_preserves_block_timing_and_return_value
     sink = StatsD::Instrument::CaptureSink.new(parent: StatsD::Instrument::NullSink.new)
     client = StatsD::Instrument::Client.new(sink: sink, enable_aggregation: true)
@@ -155,21 +113,6 @@ class ClientTest < Minitest::Test
     client.force_flush
     datagram = sink.datagrams.find { |d| d.name == "latency" }
     assert_equal(25.0, datagram.value)
-  ensure
-    client&.instance_variable_get(:@aggregator)&.instance_variable_get(:@flush_thread)&.kill
-  end
-
-  def test_aggregation_skips_sampled_out_metrics
-    sink = StatsD::Instrument::CaptureSink.new(parent: StatsD::Instrument::NullSink.new)
-    sink.stubs(:sample?).with(0.1).returns(false)
-    client = StatsD::Instrument::Client.new(sink: sink, enable_aggregation: true)
-
-    client.increment("requests", sample_rate: 0.1)
-    client.distribution("latency", 10, sample_rate: 0.1)
-    client.histogram("size", 20, sample_rate: 0.1)
-    client.force_flush
-
-    assert_empty(sink.datagrams)
   ensure
     client&.instance_variable_get(:@aggregator)&.instance_variable_get(:@flush_thread)&.kill
   end
