@@ -3,6 +3,22 @@
 require "test_helper"
 
 class AggregatorTest < Minitest::Test
+  # Keeps the behavior-focused tests readable while the production Aggregator
+  # exposes only its strict positional interface.
+  class KeywordTestAggregator < StatsD::Instrument::Aggregator
+    def increment(name, value = 1, tags: [], no_prefix: false, sample_rate: 1.0)
+      super(name, value, tags, no_prefix, sample_rate)
+    end
+
+    def gauge(name, value, tags: [], no_prefix: false)
+      super(name, value, tags, no_prefix)
+    end
+
+    def aggregate_timing(name, value, tags: [], no_prefix: false, type: :d, sample_rate: 1.0)
+      super(name, value, tags, no_prefix, type, sample_rate)
+    end
+  end
+
   class CaptureLogger
     attr_reader :messages
 
@@ -24,7 +40,7 @@ class AggregatorTest < Minitest::Test
     StatsD.logger = @logger
 
     @sink = StatsD::Instrument::CaptureSink.new(parent: StatsD::Instrument::NullSink.new)
-    @subject = StatsD::Instrument::Aggregator.new(
+    @subject = KeywordTestAggregator.new(
       @sink, StatsD::Instrument::DatagramBuilder, nil, [], flush_interval: 0.1
     )
   end
@@ -35,14 +51,14 @@ class AggregatorTest < Minitest::Test
     StatsD.logger = @old_logger
   end
 
-  def test_record_entrypoints_use_fixed_positional_arguments
+  def test_aggregator_entrypoints_use_fixed_positional_arguments
     assert_equal(
       [[:req, :name], [:req, :value], [:req, :tags], [:req, :no_prefix], [:req, :sample_rate]],
-      @subject.method(:record_counter).parameters,
+      StatsD::Instrument::Aggregator.instance_method(:increment).parameters,
     )
     assert_equal(
       [[:req, :name], [:req, :value], [:req, :tags], [:req, :no_prefix]],
-      @subject.method(:record_gauge).parameters,
+      StatsD::Instrument::Aggregator.instance_method(:gauge).parameters,
     )
     assert_equal(
       [
@@ -53,7 +69,7 @@ class AggregatorTest < Minitest::Test
         [:req, :type],
         [:req, :sample_rate],
       ],
-      @subject.method(:record_timing).parameters,
+      StatsD::Instrument::Aggregator.instance_method(:aggregate_timing).parameters,
     )
   end
 
@@ -222,7 +238,7 @@ class AggregatorTest < Minitest::Test
   end
 
   def test_with_prefix
-    aggregator = StatsD::Instrument::Aggregator.new(@sink, StatsD::Instrument::DatagramBuilder, "MyApp", [])
+    aggregator = KeywordTestAggregator.new(@sink, StatsD::Instrument::DatagramBuilder, "MyApp", [])
 
     aggregator.increment("foo", 1, tags: ["tag1:val1", "tag2:val2"])
     aggregator.increment("foo", 1, tags: ["tag1:val1", "tag2:val2"])
@@ -241,7 +257,7 @@ class AggregatorTest < Minitest::Test
   def test_finalizer_with_prefix
     # Test that the finalizer correctly uses the prefix when flushing metrics
     # IMPORTANT: Use empty tags to ensure datagram_builder is not pre-created by tags_sorted
-    aggregator = StatsD::Instrument::Aggregator.new(@sink, StatsD::Instrument::DatagramBuilder, "MyApp", [])
+    aggregator = KeywordTestAggregator.new(@sink, StatsD::Instrument::DatagramBuilder, "MyApp", [])
 
     aggregator.increment("foo", 1, tags: [])
     aggregator.increment("bar", 1, tags: [], no_prefix: true)

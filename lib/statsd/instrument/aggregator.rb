@@ -148,7 +148,7 @@ module StatsD
       # @param tags [Hash{String, Symbol => String},Array<String>] The tags to attach to the counter.
       # @param no_prefix [Boolean] If true, the metric will not be prefixed.
       # @return [void]
-      def increment(name, value = 1, tags: [], no_prefix: false, sample_rate: CONST_SAMPLE_RATE)
+      def increment(name, value, tags, no_prefix, sample_rate)
         unless thread_healthcheck
           @sink << datagram_builder(no_prefix: no_prefix).c(name, value, sample_rate, tags)
           return
@@ -161,12 +161,6 @@ module StatsD
           @aggregation_state[key] ||= 0
           @aggregation_state[key] += value
         end
-      end
-
-      # Positional-only counter entrypoint used by external aggregation backends.
-      # @api private
-      def record_counter(name, value, tags, no_prefix, sample_rate)
-        increment(name, value, tags: tags, no_prefix: no_prefix, sample_rate: sample_rate)
       end
 
       # Aggregates a precompiled metric that can be combined into a single scalar for later flushing.
@@ -230,7 +224,7 @@ module StatsD
         end
       end
 
-      def aggregate_timing(name, value, tags: [], no_prefix: false, type: DISTRIBUTION, sample_rate: CONST_SAMPLE_RATE)
+      def aggregate_timing(name, value, tags, no_prefix, type, sample_rate)
         unless thread_healthcheck
           @sink << datagram_builder(no_prefix: no_prefix).timing_value_packed(
             name, type.to_s, [value], sample_rate, tags
@@ -255,13 +249,7 @@ module StatsD
         do_flush(aggregation_state) if aggregation_state
       end
 
-      # Positional-only timing entrypoint used by external aggregation backends.
-      # @api private
-      def record_timing(name, value, tags, no_prefix, type, sample_rate)
-        aggregate_timing(name, value, tags: tags, no_prefix: no_prefix, type: type, sample_rate: sample_rate)
-      end
-
-      def gauge(name, value, tags: [], no_prefix: false)
+      def gauge(name, value, tags, no_prefix)
         unless thread_healthcheck
           @sink << datagram_builder(no_prefix: no_prefix).g(name, value, CONST_SAMPLE_RATE, tags)
           return
@@ -273,12 +261,6 @@ module StatsD
         @aggregation_state_mutex.synchronize do
           @aggregation_state[key] = value
         end
-      end
-
-      # Positional-only gauge entrypoint used by external aggregation backends.
-      # @api private
-      def record_gauge(name, value, tags, no_prefix)
-        gauge(name, value, tags: tags, no_prefix: no_prefix)
       end
 
       def flush

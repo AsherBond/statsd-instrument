@@ -111,11 +111,12 @@ Please note that since aggregation is an experimental feature, it should be used
 > [!WARNING]
 > This feature is only compatible with Datadog Agent's version >=6.25.0 && <7.0.0 or Agent's versions >=7.25.0.
 
-#### External positional aggregators
+#### Positional aggregator interface
 
-A client can use an external aggregation backend by passing `aggregator:`. This
-implicitly enables aggregation and uses fixed-arity positional calls, which
-avoids converting keyword arguments at a native extension boundary:
+The aggregator is an internal fixed-arity positional interface. Public Client
+methods keep their keyword options, but no keyword arguments are forwarded to
+the built-in or an injected aggregator. A client can inject a backend by passing
+`aggregator:`, which also implicitly enables aggregation:
 
 ```ruby
 client = StatsD::Instrument::Client.new(aggregator: MyNativeAggregator.new)
@@ -124,14 +125,14 @@ client = StatsD::Instrument::Client.new(aggregator: MyNativeAggregator.new)
 The aggregator implements:
 
 ```ruby
-def record_counter(name, value, tags, no_prefix, sample_rate)
-def record_gauge(name, value, tags, no_prefix)
-def record_timing(name, value, tags, no_prefix, type, sample_rate)
+def increment(name, value, tags, no_prefix, sample_rate)
+def gauge(name, value, tags, no_prefix)
+def aggregate_timing(name, value, tags, no_prefix, type, sample_rate)
 def flush
 ```
 
 Calls without tags receive a shared frozen empty array. Other tag values are
-forwarded as-is; native aggregators can require callers to use arrays. The
+forwarded as-is; custom aggregators can require callers to use arrays. The
 backend is responsible for applying the client's prefix/default-tag policy and
 for implementing the existing precompiled aggregation methods if it will be
 used with `CompiledMetric`. Cloned clients reuse the injected aggregator unless

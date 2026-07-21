@@ -153,15 +153,14 @@ module StatsD
 
       # Instantiates a new client.
       #
-      # When +aggregator+ is provided, it enables aggregation and dispatches through
-      # the fixed-arity positional +record_counter+, +record_gauge+, and
-      # +record_timing+ interface. This avoids keyword argument conversion at a
-      # native extension boundary. The injected aggregator is also expected to
-      # implement the existing precompiled aggregation methods and +flush+.
-      # Calls without tags receive a shared frozen empty array. Other tag values
-      # are forwarded as-is; native backends may require callers to pass arrays.
+      # Aggregators use fixed-arity positional +increment+, +gauge+, and
+      # +aggregate_timing+ methods. This keeps the aggregation hot path simple
+      # and avoids keyword argument forwarding. An injected aggregator is also
+      # expected to implement the existing precompiled aggregation methods and
+      # +flush+. Calls without tags receive a shared frozen empty array. Other tag
+      # values are forwarded as-is; custom backends may require arrays.
       #
-      # @param aggregator [#record_counter, #record_gauge, #record_timing, nil]
+      # @param aggregator [#increment, #gauge, #aggregate_timing, nil]
       #   Optional external aggregation backend.
       # @see .from_env to instantiate a client using environment variables.
       def initialize(
@@ -184,8 +183,8 @@ module StatsD
         @default_sample_rate = default_sample_rate
 
         @datagram_builder = { false => nil, true => nil }
-        @positional_aggregator = !aggregator.nil?
-        @enable_aggregation = enable_aggregation || @positional_aggregator
+        @injected_aggregator = aggregator
+        @enable_aggregation = enable_aggregation || !aggregator.nil?
         @aggregation_flush_interval = aggregation_flush_interval
         if @enable_aggregation
           @aggregator = aggregator ||
@@ -241,11 +240,7 @@ module StatsD
         return StatsD::Instrument::VOID if sample_rate && !sample?(sample_rate)
 
         if @enable_aggregation
-          if @positional_aggregator
-            @aggregator.record_counter(name, value, tags || EMPTY_TAGS, no_prefix, sample_rate)
-          else
-            @aggregator.increment(name, value, tags: tags, no_prefix: no_prefix, sample_rate: sample_rate)
-          end
+          @aggregator.increment(name, value, tags || EMPTY_TAGS, no_prefix, sample_rate)
         else
           emit(datagram_builder(no_prefix: no_prefix).c(name, value, sample_rate, tags))
         end
@@ -379,11 +374,7 @@ module StatsD
         end
 
         if @enable_aggregation
-          if @positional_aggregator
-            @aggregator.record_timing(name, value, tags || EMPTY_TAGS, no_prefix, :ms, sample_rate)
-          else
-            @aggregator.aggregate_timing(name, value, tags: tags, no_prefix: no_prefix, type: :ms, sample_rate: sample_rate)
-          end
+          @aggregator.aggregate_timing(name, value, tags || EMPTY_TAGS, no_prefix, :ms, sample_rate)
           return StatsD::Instrument::VOID
         end
         emit(datagram_builder(no_prefix: no_prefix).ms(name, value, sample_rate, tags))
@@ -405,11 +396,7 @@ module StatsD
       # @return [void]
       def gauge(name, value, sample_rate: nil, tags: nil, no_prefix: false)
         if @enable_aggregation
-          if @positional_aggregator
-            @aggregator.record_gauge(name, value, tags || EMPTY_TAGS, no_prefix)
-          else
-            @aggregator.gauge(name, value, tags: tags, no_prefix: no_prefix)
-          end
+          @aggregator.gauge(name, value, tags || EMPTY_TAGS, no_prefix)
           return StatsD::Instrument::VOID
         end
 
@@ -461,18 +448,7 @@ module StatsD
         end
 
         if @enable_aggregation
-          if @positional_aggregator
-            @aggregator.record_timing(name, value, tags || EMPTY_TAGS, no_prefix, :d, sample_rate)
-          else
-            @aggregator.aggregate_timing(
-              name,
-              value,
-              tags: tags,
-              no_prefix: no_prefix,
-              type: :d,
-              sample_rate: sample_rate,
-            )
-          end
+          @aggregator.aggregate_timing(name, value, tags || EMPTY_TAGS, no_prefix, :d, sample_rate)
           return StatsD::Instrument::VOID
         end
 
@@ -501,11 +477,7 @@ module StatsD
         end
 
         if @enable_aggregation
-          if @positional_aggregator
-            @aggregator.record_timing(name, value, tags || EMPTY_TAGS, no_prefix, :h, sample_rate)
-          else
-            @aggregator.aggregate_timing(name, value, tags: tags, no_prefix: no_prefix, type: :h, sample_rate: sample_rate)
-          end
+          @aggregator.aggregate_timing(name, value, tags || EMPTY_TAGS, no_prefix, :h, sample_rate)
           return StatsD::Instrument::VOID
         end
 
@@ -543,18 +515,14 @@ module StatsD
             latency_in_ms = stop - start
 
             if @enable_aggregation
-              if @positional_aggregator
-                @aggregator.record_timing(name, latency_in_ms, tags || EMPTY_TAGS, no_prefix, metric_type, sample_rate)
-              else
-                @aggregator.aggregate_timing(
-                  name,
-                  latency_in_ms,
-                  tags: tags,
-                  no_prefix: no_prefix,
-                  type: metric_type,
-                  sample_rate: sample_rate,
-                )
-              end
+              @aggregator.aggregate_timing(
+                name,
+                latency_in_ms,
+                tags || EMPTY_TAGS,
+                no_prefix,
+                metric_type,
+                sample_rate,
+              )
             else
               emit(datagram_builder(no_prefix: no_prefix).send(metric_type, name, latency_in_ms, sample_rate, tags))
             end
@@ -672,7 +640,7 @@ module StatsD
             datagram_builder_class == NO_CHANGE ? @datagram_builder_class : datagram_builder_class,
           enable_aggregation: @enable_aggregation,
           aggregation_flush_interval: @aggregation_flush_interval,
-          aggregator: aggregator == NO_CHANGE ? (@aggregator if @positional_aggregator) : aggregator,
+          aggregator: aggregator == NO_CHANGE ? @injected_aggregator : aggregator,
         )
       end
 

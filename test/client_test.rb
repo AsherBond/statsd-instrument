@@ -10,15 +10,15 @@ class ClientTest < Minitest::Test
       @calls = []
     end
 
-    def record_counter(name, value, tags, no_prefix, sample_rate)
+    def increment(name, value, tags, no_prefix, sample_rate)
       @calls << [:counter, name, value, tags, no_prefix, sample_rate]
     end
 
-    def record_gauge(name, value, tags, no_prefix)
+    def gauge(name, value, tags, no_prefix)
       @calls << [:gauge, name, value, tags, no_prefix]
     end
 
-    def record_timing(name, value, tags, no_prefix, type, sample_rate)
+    def aggregate_timing(name, value, tags, no_prefix, type, sample_rate)
       @calls << [:timing, name, value, tags, no_prefix, type, sample_rate]
     end
 
@@ -138,11 +138,11 @@ class ClientTest < Minitest::Test
     assert_equal(true, !datagram.nil?)
   end
 
-  def test_default_aggregator_keeps_keyword_dispatch
+  def test_default_aggregator_uses_positional_dispatch
     client = StatsD::Instrument::Client.new(enable_aggregation: true)
     aggregator = client.instance_variable_get(:@aggregator)
     tags = ["route:cart"]
-    aggregator.expects(:increment).with("requests", 1, tags: tags, no_prefix: false, sample_rate: nil)
+    aggregator.expects(:increment).with("requests", 1, tags, false, nil)
 
     client.increment("requests", tags: tags)
   ensure
