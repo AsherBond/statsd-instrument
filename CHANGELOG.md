@@ -6,6 +6,8 @@ section below.
 
 ## Unreleased changes
 
+## Version 3.12.0
+
 - Make the internal aggregator interface positional-only and injectable through `Client`, with fixed-arity `increment`, `gauge`, and `aggregate_timing` entrypoints for native aggregation backends. Public Client metric methods retain their keyword API.
 
 ## Version 3.11.2
