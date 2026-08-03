@@ -285,10 +285,10 @@ class CompiledMetricDefinitionTest < Minitest::Test
 
     cache = metric.instance_variable_get(:@tag_combination_cache)
 
-    # Compute cache keys using the rotate-left + XOR formula (32-bit bounded)
-    # For single tag, it's the hash value masked to 32 bits
-    cache_key_for_1 = 1.hash & 0xFFFFFFFF
-    cache_key_for_2 = 2.hash & 0xFFFFFFFF
+    # Compute cache keys using the rotate-left + XOR formula (57-bit bounded)
+    # For single tag, it's the hash value masked to 57 bits
+    cache_key_for_1 = 1.hash & 0x01FFFFFFFFFFFFFF
+    cache_key_for_2 = 2.hash & 0x01FFFFFFFFFFFFFF
 
     # Store the cached datagram under the collision key
     cached_datagram = cache[cache_key_for_1]
@@ -310,6 +310,75 @@ class CompiledMetricDefinitionTest < Minitest::Test
     assert_equal(1, hash_collision_metric.value)
     # The metric name uses the normalized name (only : | @ are replaced, not .)
     assert_includes(hash_collision_metric.tags, "metric_name:foo.bar")
+  end
+
+  def test_cache_key_space_is_wider_than_32_bits
+    metric = Class.new(StatsD::Instrument::CompiledMetric::Counter) do
+      define(
+        name: "foo.bar",
+        tags: { shop_id: Integer },
+      )
+    end
+
+    # Hash seeds are process-local, so find a pair of tag values at runtime that
+    # shares its low 32 hash bits (collided under the previous 32-bit cache key)
+    # while still differing across the full 57-bit key space.
+    seen = {}
+    pair = nil
+    i = 0
+    until pair
+      key = i.hash & 0xFFFFFFFF
+      other = seen[key]
+      if other && other != i && (other.hash & 0x01FFFFFFFFFFFFFF) != (i.hash & 0x01FFFFFFFFFFFFFF)
+        pair = [other, i]
+      end
+      seen[key] ||= i
+      i += 1
+    end
+
+    metric.increment(1, shop_id: pair[0])
+    metric.increment(1, shop_id: pair[1])
+
+    cache = metric.instance_variable_get(:@tag_combination_cache)
+    assert_equal(2, cache.size)
+
+    collision_metric = @sink.datagrams.find do |datagram|
+      datagram.name == "test.statsd_instrument.compiled_metric.hash_collision_detected"
+    end
+    assert_nil(collision_metric, "Expected no hash collision metric for 57-bit-distinct keys")
+  end
+
+  def test_cache_key_computation_does_not_allocate
+    single_tag_metric = Class.new(StatsD::Instrument::CompiledMetric::Counter) do
+      define(name: "foo.single", tags: { a: String })
+    end
+    multi_tag_metric = Class.new(StatsD::Instrument::CompiledMetric::Counter) do
+      define(name: "foo.multi", tags: { a: String, b: String, c: String, d: String, e: String, f: String, g: String, h: String })
+    end
+
+    single_call = -> { single_tag_metric.increment(1, a: "a") }
+    multi_call = -> { multi_tag_metric.increment(1, a: "a", b: "b", c: "c", d: "d", e: "e", f: "f", g: "g", h: "h") }
+    measure = ->(callable) { count_allocations { 10.times { callable.call } } }
+    [single_call, multi_call].each { |c| measure.call(c) }
+
+    # With frozen string literals, the rotate-left + XOR chain is the only per-tag
+    # work on a cache hit. A cache key wide enough to escape Fixnum range would
+    # allocate one heap integer per chain step and show up as extra allocations
+    # for the multi-tag metric.
+    assert_equal(
+      measure.call(single_call),
+      measure.call(multi_call),
+      "Expected per-tag cache-key computation to allocate nothing",
+    )
+  end
+
+  private
+
+  def count_allocations
+    GC.start
+    before = GC.stat(:total_allocated_objects)
+    yield
+    GC.stat(:total_allocated_objects) - before
   end
 
   def test_handles_default_tags_as_array
