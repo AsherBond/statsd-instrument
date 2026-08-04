@@ -6,6 +6,12 @@ section below.
 
 ## Unreleased changes
 
+## Version 3.11.2
+
+- Widen the `CompiledMetric` tag-combination cache key from 32 to 57 bits, eliminating
+  recurring hash collisions on hot metrics while keeping all intermediates within Fixnum
+  range (no new allocations on the emit path).
+
 ## Version 3.11.1
 
 - Fix `CompiledMetric::Distribution` applying `sample_rate` twice.

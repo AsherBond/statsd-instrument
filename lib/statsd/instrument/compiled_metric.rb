@@ -189,10 +189,13 @@ module StatsD
 
               # Compute hash of tag values for cache lookup using rotate-left + XOR.
               # Rotation makes it order-dependent (unlike plain XOR), preventing collisions
-              # when tag values are swapped. We mask to 32 bits to avoid Bignum allocations
-              # from left shifts on 64-bit hash values.
-              __cache_key__ = #{tag_names.first}.hash & 0xFFFFFFFF
-              #{tag_names.drop(1).map { |name| "__cache_key__ = (((__cache_key__ << 5) | (__cache_key__ >> 27)) ^ #{name}.hash) & 0xFFFFFFFF" }.join("\n")}
+              # when tag values are swapped. The mask keeps 57 bits of entropy, wide enough
+              # that birthday collisions are negligible at real tag-combination volumes.
+              # 57 bits is the widest key for which the intermediate (__cache_key__ << 5)
+              # stays within Fixnum range (2**62 - 1 on 64-bit CRuby) and never allocates
+              # a Bignum.
+              __cache_key__ = #{tag_names.first}.hash & 0x01FFFFFFFFFFFFFF
+              #{tag_names.drop(1).map { |name| "__cache_key__ = (((__cache_key__ << 5) | (__cache_key__ >> 52)) ^ #{name}.hash) & 0x01FFFFFFFFFFFFFF" }.join("\n")}
 
               # Look up or create a PrecompiledDatagram
               __datagram__ =
