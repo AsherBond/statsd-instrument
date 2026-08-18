@@ -349,6 +349,8 @@ class CompiledMetricDefinitionTest < Minitest::Test
   end
 
   def test_cache_key_computation_does_not_allocate
+    skip_on_jruby("JRuby does not support GC.stat(:total_allocated_objects)")
+
     single_tag_metric = Class.new(StatsD::Instrument::CompiledMetric::Counter) do
       define(name: "foo.single", tags: { a: String })
     end
