@@ -117,6 +117,21 @@ class ClientTest < Minitest::Test
     client&.instance_variable_get(:@aggregator)&.instance_variable_get(:@flush_thread)&.kill
   end
 
+  def test_injected_aggregator_receives_positional_calls
+    aggregator = mock("aggregator")
+    tags = ["route:cart"]
+    aggregator.expects(:increment).with("requests", 2, tags, false, nil)
+    aggregator.expects(:flush)
+
+    client = StatsD::Instrument::Client.new(
+      aggregator: aggregator,
+      sink: StatsD::Instrument::NullSink.new,
+    )
+
+    client.increment("requests", 2, tags: tags)
+    client.force_flush
+  end
+
   def test_aggregation_supports_existing_compiled_metrics
     sink = StatsD::Instrument::CaptureSink.new(parent: StatsD::Instrument::NullSink.new)
     client = StatsD::Instrument::Client.new(sink: sink, enable_aggregation: true)
