@@ -6,6 +6,10 @@ section below.
 
 ## Unreleased changes
 
+## Version 4.0.0
+
+- Make the internal aggregator interface positional-only and injectable through `Client`, with fixed-arity `increment`, `gauge`, and `aggregate_timing` entrypoints for native aggregation backends. Public Client metric methods retain their keyword API.
+
 ## Version 3.11.2
 
 - Widen the `CompiledMetric` tag-combination cache key from 32 to 57 bits, eliminating

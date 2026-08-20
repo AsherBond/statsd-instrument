@@ -148,7 +148,7 @@ module StatsD
       # @param tags [Hash{String, Symbol => String},Array<String>] The tags to attach to the counter.
       # @param no_prefix [Boolean] If true, the metric will not be prefixed.
       # @return [void]
-      def increment(name, value = 1, tags: [], no_prefix: false, sample_rate: CONST_SAMPLE_RATE)
+      def increment(name, value, tags, no_prefix, sample_rate)
         unless thread_healthcheck
           @sink << datagram_builder(no_prefix: no_prefix).c(name, value, sample_rate, tags)
           return
@@ -224,7 +224,7 @@ module StatsD
         end
       end
 
-      def aggregate_timing(name, value, tags: [], no_prefix: false, type: DISTRIBUTION, sample_rate: CONST_SAMPLE_RATE)
+      def aggregate_timing(name, value, tags, no_prefix, type, sample_rate)
         unless thread_healthcheck
           @sink << datagram_builder(no_prefix: no_prefix).timing_value_packed(
             name, type.to_s, [value], sample_rate, tags
@@ -249,7 +249,7 @@ module StatsD
         do_flush(aggregation_state) if aggregation_state
       end
 
-      def gauge(name, value, tags: [], no_prefix: false)
+      def gauge(name, value, tags, no_prefix)
         unless thread_healthcheck
           @sink << datagram_builder(no_prefix: no_prefix).g(name, value, CONST_SAMPLE_RATE, tags)
           return

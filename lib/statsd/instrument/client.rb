@@ -19,6 +19,9 @@ module StatsD
     # @see StatsD.singleton_client
     # @see #clone_with_options
     class Client
+      EMPTY_TAGS = [].freeze
+      private_constant :EMPTY_TAGS
+
       class << self
         # Instantiates a StatsD::Instrument::Client using configuration values provided in
         # environment variables.
@@ -31,7 +34,8 @@ module StatsD
           default_tags: env.statsd_default_tags,
           implementation: env.statsd_implementation,
           sink: env.default_sink_for_environment,
-          datagram_builder_class: datagram_builder_class_for_implementation(implementation)
+          datagram_builder_class: datagram_builder_class_for_implementation(implementation),
+          aggregator: nil
         )
           new(
             prefix: prefix,
@@ -42,6 +46,7 @@ module StatsD
             datagram_builder_class: datagram_builder_class,
             enable_aggregation: env.experimental_aggregation_enabled?,
             aggregation_flush_interval: env.aggregation_interval,
+            aggregator: aggregator,
           )
         end
 
@@ -147,6 +152,16 @@ module StatsD
       end
 
       # Instantiates a new client.
+      #
+      # Aggregators use fixed-arity positional +increment+, +gauge+, and
+      # +aggregate_timing+ methods. This keeps the aggregation hot path simple
+      # and avoids keyword argument forwarding. An injected aggregator is also
+      # expected to implement the existing precompiled aggregation methods and
+      # +flush+. Calls without tags receive a shared frozen empty array. Other tag
+      # values are forwarded as-is; custom backends may require arrays.
+      #
+      # @param aggregator [#increment, #gauge, #aggregate_timing, nil]
+      #   Optional external aggregation backend.
       # @see .from_env to instantiate a client using environment variables.
       def initialize(
         prefix: nil,
@@ -157,7 +172,8 @@ module StatsD
         datagram_builder_class: self.class.datagram_builder_class_for_implementation(implementation),
         enable_aggregation: false,
         aggregation_flush_interval: 2.0,
-        aggregation_max_context_size: StatsD::Instrument::Aggregator::DEFAULT_MAX_CONTEXT_SIZE
+        aggregation_max_context_size: StatsD::Instrument::Aggregator::DEFAULT_MAX_CONTEXT_SIZE,
+        aggregator: nil
       )
         @sink = sink
         @datagram_builder_class = datagram_builder_class
@@ -167,10 +183,11 @@ module StatsD
         @default_sample_rate = default_sample_rate
 
         @datagram_builder = { false => nil, true => nil }
-        @enable_aggregation = enable_aggregation
+        @injected_aggregator = aggregator
+        @enable_aggregation = enable_aggregation || !aggregator.nil?
         @aggregation_flush_interval = aggregation_flush_interval
         if @enable_aggregation
-          @aggregator =
+          @aggregator = aggregator ||
             Aggregator.new(
               @sink,
               datagram_builder_class,
@@ -223,7 +240,7 @@ module StatsD
         return StatsD::Instrument::VOID if sample_rate && !sample?(sample_rate)
 
         if @enable_aggregation
-          @aggregator.increment(name, value, tags: tags, no_prefix: no_prefix, sample_rate: sample_rate)
+          @aggregator.increment(name, value, tags || EMPTY_TAGS, no_prefix, sample_rate)
         else
           emit(datagram_builder(no_prefix: no_prefix).c(name, value, sample_rate, tags))
         end
@@ -357,7 +374,7 @@ module StatsD
         end
 
         if @enable_aggregation
-          @aggregator.aggregate_timing(name, value, tags: tags, no_prefix: no_prefix, type: :ms, sample_rate: sample_rate)
+          @aggregator.aggregate_timing(name, value, tags || EMPTY_TAGS, no_prefix, :ms, sample_rate)
           return StatsD::Instrument::VOID
         end
         emit(datagram_builder(no_prefix: no_prefix).ms(name, value, sample_rate, tags))
@@ -379,7 +396,7 @@ module StatsD
       # @return [void]
       def gauge(name, value, sample_rate: nil, tags: nil, no_prefix: false)
         if @enable_aggregation
-          @aggregator.gauge(name, value, tags: tags, no_prefix: no_prefix)
+          @aggregator.gauge(name, value, tags || EMPTY_TAGS, no_prefix)
           return StatsD::Instrument::VOID
         end
 
@@ -431,14 +448,7 @@ module StatsD
         end
 
         if @enable_aggregation
-          @aggregator.aggregate_timing(
-            name,
-            value,
-            tags: tags,
-            no_prefix: no_prefix,
-            type: :d,
-            sample_rate: sample_rate,
-          )
+          @aggregator.aggregate_timing(name, value, tags || EMPTY_TAGS, no_prefix, :d, sample_rate)
           return StatsD::Instrument::VOID
         end
 
@@ -467,7 +477,7 @@ module StatsD
         end
 
         if @enable_aggregation
-          @aggregator.aggregate_timing(name, value, tags: tags, no_prefix: no_prefix, type: :h, sample_rate: sample_rate)
+          @aggregator.aggregate_timing(name, value, tags || EMPTY_TAGS, no_prefix, :h, sample_rate)
           return StatsD::Instrument::VOID
         end
 
@@ -508,10 +518,10 @@ module StatsD
               @aggregator.aggregate_timing(
                 name,
                 latency_in_ms,
-                tags: tags,
-                no_prefix: no_prefix,
-                type: metric_type,
-                sample_rate: sample_rate,
+                tags || EMPTY_TAGS,
+                no_prefix,
+                metric_type,
+                sample_rate,
               )
             else
               emit(datagram_builder(no_prefix: no_prefix).send(metric_type, name, latency_in_ms, sample_rate, tags))
@@ -598,7 +608,8 @@ module StatsD
         prefix: NO_CHANGE,
         default_sample_rate: NO_CHANGE,
         default_tags: NO_CHANGE,
-        datagram_builder_class: NO_CHANGE
+        datagram_builder_class: NO_CHANGE,
+        aggregator: NO_CHANGE
       )
         client = clone_with_options(
           sink: sink,
@@ -606,6 +617,7 @@ module StatsD
           default_sample_rate: default_sample_rate,
           default_tags: default_tags,
           datagram_builder_class: datagram_builder_class,
+          aggregator: aggregator,
         )
 
         yield(client)
@@ -616,7 +628,8 @@ module StatsD
         prefix: NO_CHANGE,
         default_sample_rate: NO_CHANGE,
         default_tags: NO_CHANGE,
-        datagram_builder_class: NO_CHANGE
+        datagram_builder_class: NO_CHANGE,
+        aggregator: NO_CHANGE
       )
         self.class.new(
           sink: sink == NO_CHANGE ? @sink : sink,
@@ -627,6 +640,7 @@ module StatsD
             datagram_builder_class == NO_CHANGE ? @datagram_builder_class : datagram_builder_class,
           enable_aggregation: @enable_aggregation,
           aggregation_flush_interval: @aggregation_flush_interval,
+          aggregator: aggregator == NO_CHANGE ? @injected_aggregator : aggregator,
         )
       end
 
